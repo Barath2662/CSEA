@@ -108,7 +108,7 @@ if not exist "%SERVER_DIR%\models\yolov8n.pt" (
     echo [OK]    YOLOv8n model already present
 )
 
-REM ── 5. Node.js & client build ────────────────────────────
+REM ── 5. Node.js & client setup ─────────────────────────────
 if "%SKIP_FRONTEND_DEV%"=="1" goto :skip_frontend
 
 echo [INFO]  Installing Node.js dependencies...
@@ -116,36 +116,66 @@ cd /d "%CLIENT_DIR%"
 call npm install --silent 2>nul
 if %ERRORLEVEL% neq 0 (
     echo [WARN]  npm install failed
-    goto :build_failed
 )
 echo [OK]    Node packages installed
-
-echo [INFO]  Building React client for production...
-call npm run build --silent 2>nul
-if %ERRORLEVEL% neq 0 (
-    echo [WARN]  Frontend build failed — backend will still start
-    goto :build_failed
-)
-echo [OK]    Client built
-
-:build_failed
 cd /d "%ROOT_DIR%"
 
 :skip_frontend
 echo.
+
+REM ── 6. Kill stale processes on ports ─────────────────────
+echo [INFO]  Checking for stale processes on ports 8000 and 3000...
+for /f "tokens=5" %%a in ('netstat -ano 2^>nul ^| findstr ":8000.*LISTENING"') do (
+    echo [WARN]  Killing process on port 8000 (PID %%a^)
+    taskkill /F /PID %%a >nul 2>nul
+)
+for /f "tokens=5" %%a in ('netstat -ano 2^>nul ^| findstr ":3000.*LISTENING"') do (
+    echo [WARN]  Killing process on port 3000 (PID %%a^)
+    taskkill /F /PID %%a >nul 2>nul
+)
+timeout /t 1 >nul 2>nul
+
+REM ── 7. Summary ──────────────────────────────────────────
+echo.
 echo ======================================================
-echo   ^! Setup Complete
+echo   Setup Complete
 echo ======================================================
 echo.
-echo   Backend (FastAPI):   http://localhost:8000
+echo   Backend  (FastAPI):  http://localhost:8000
 echo   Frontend (React):    http://localhost:3000
 echo   Health Check:        http://localhost:8000/api/health
 echo.
-echo   Press Ctrl+C to stop the server
+echo   Close this window or press Ctrl+C to stop servers
 echo.
 
-REM ── 6. Start the server ──────────────────────────────────
+REM ── 8. Start backend (port 8000) in background ───────────
+echo [INFO]  Starting FastAPI backend on http://localhost:8000 ...
 cd /d "%SERVER_DIR%"
-python -m uvicorn backend:app --host 0.0.0.0 --port 8000
+start "DriverAI-Backend" /B python -m uvicorn backend:app --host 0.0.0.0 --port 8000
+timeout /t 2 >nul 2>nul
+echo [OK]    Backend started
+
+REM ── 9. Start frontend (port 3000) ───────────────────────
+if "%SKIP_FRONTEND_DEV%"=="1" (
+    echo [INFO]  No Node.js — open http://localhost:8000 for pre-built frontend
+    goto :wait_loop
+)
+
+echo [INFO]  Starting React dev server on http://localhost:3000 ...
+cd /d "%CLIENT_DIR%"
+start "DriverAI-Frontend" /B npm run dev
+timeout /t 2 >nul 2>nul
+echo [OK]    Frontend started
+echo.
+echo   Open http://localhost:3000 in your browser
+echo.
+
+:wait_loop
+echo Press any key to stop both servers...
+pause >nul
+echo [INFO]  Shutting down...
+taskkill /FI "WINDOWTITLE eq DriverAI-Backend" /F >nul 2>nul
+taskkill /FI "WINDOWTITLE eq DriverAI-Frontend" /F >nul 2>nul
+echo [OK]    All servers stopped
 
 endlocal

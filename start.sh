@@ -128,38 +128,89 @@ else
     ok "YOLOv8n model already present"
 fi
 
-# ── 5. Node.js & client build ──────────────────────────────
+# ── 5. Node.js & client setup ──────────────────────────────
 if [ -z "$SKIP_FRONTEND_DEV" ]; then
-    info "Installing Node.js dependencies."
+    info "Installing Node.js dependencies..."
     cd "$CLIENT_DIR"
     npm install --silent 2>/dev/null || {
         warn "npm install failed"
     }
     ok "Node packages installed"
-    
-    info "Building React client for production..."
-    npm run build --silent 2>/dev/null || {
-        warn "Frontend build failed — backend will still start but frontend won't be available"
-    }
-    ok "Client built → client/dist/"
     cd "$ROOT_DIR"
 else
     warn "Skipping Node.js setup — frontend unavailable"
 fi
 
-# ── 6. Summary & startup ───────────────────────────────────
+# ── 6. Kill stale processes on ports ───────────────────────
+kill_port() {
+    local port=$1
+    local pid
+    pid=$(lsof -ti:"$port" 2>/dev/null)
+    if [ -n "$pid" ]; then
+        warn "Port $port in use (PID $pid) — killing..."
+        kill -9 $pid 2>/dev/null
+        sleep 1
+    fi
+}
+
+kill_port 8000
+kill_port 3000
+
+# ── 7. Summary ─────────────────────────────────────────────
 echo ""
 echo -e "${BOLD}${GREEN}════════════════════════════════════════════════════${NC}${BOLD}"
 echo -e "${GREEN}  ✓ Setup Complete${NC}"
 echo -e "${BOLD}${GREEN}════════════════════════════════════════════════════${NC}${BOLD}"
 echo ""
-echo -e "  ${BOLD}Backend (FastAPI):${NC}   http://localhost:8000"
-echo -e "  ${BOLD}Frontend (React):${NC}    http://localhost:3000"
+echo -e "  ${BOLD}Backend  (FastAPI):${NC}  http://localhost:8000"
+echo -e "  ${BOLD}Frontend (React):${NC}   http://localhost:3000"
 echo -e "  ${BOLD}Health Check:${NC}       http://localhost:8000/api/health"
 echo ""
-echo -e "  Press ${BOLD}Ctrl+C${NC} to stop the server"
+echo -e "  Press ${BOLD}Ctrl+C${NC} to stop both servers"
 echo ""
 
-# ── 7. Start the servers ───────────────────────────────────
+# ── 8. Trap Ctrl+C to clean up both processes ──────────────
+cleanup() {
+    echo ""
+    info "Shutting down..."
+    [ -n "$BACKEND_PID" ] && kill $BACKEND_PID 2>/dev/null
+    [ -n "$FRONTEND_PID" ] && kill $FRONTEND_PID 2>/dev/null
+    wait 2>/dev/null
+    ok "All servers stopped"
+    exit 0
+}
+trap cleanup SIGINT SIGTERM
+
+# ── 9. Start backend (FastAPI on port 8000) ────────────────
+info "Starting FastAPI backend on http://localhost:8000 ..."
 cd "$SERVER_DIR"
-exec python3 -m uvicorn backend:app --host 0.0.0.0 --port 8000
+python3 -m uvicorn backend:app --host 0.0.0.0 --port 8000 &
+BACKEND_PID=$!
+sleep 2
+
+# Verify backend started
+if ! kill -0 $BACKEND_PID 2>/dev/null; then
+    error "Backend failed to start. Check logs above."
+fi
+ok "Backend running (PID $BACKEND_PID)"
+
+# ── 10. Start frontend (Vite dev server on port 3000) ──────
+if [ -z "$SKIP_FRONTEND_DEV" ]; then
+    info "Starting React dev server on http://localhost:3000 ..."
+    cd "$CLIENT_DIR"
+    npm run dev &
+    FRONTEND_PID=$!
+    sleep 2
+    ok "Frontend running (PID $FRONTEND_PID)"
+    echo ""
+    echo -e "${BOLD}${GREEN}  ➜  Open http://localhost:3000 in your browser${NC}"
+else
+    echo ""
+    echo -e "${BOLD}${GREEN}  ➜  Open http://localhost:8000 in your browser${NC}"
+    echo -e "     (serving pre-built frontend from client/dist/)"
+fi
+
+echo ""
+
+# Wait for both processes
+wait
