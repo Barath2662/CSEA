@@ -40,5 +40,3 @@ server/outputs/overspeed_log.csv
 # Uncomment below if you do NOT want to track models in git:
 # server/models/
 
-# ── Videos (large test files) ────────────────────
-videos/
